@@ -12,8 +12,14 @@
     <p class="lead">A small interactive chart that loads on the landing page.</p>
 
     <section class="card">
-      <canvas id="landingChart" width="800" height="400" aria-label="Bar chart showing sample data"></canvas>
-    </section>
+  <div class="charts-container">
+    <div class="chart-wrapper">
+      <canvas id="landingChart" width="400" height="400" aria-label="Bar chart showing sample data"></canvas>
+    </div>
+    <div class="chart-wrapper">
+      <canvas id="pieChart" width="400" height="400" aria-label="Pie chart showing visitor distribution"></canvas>
+    </div>
+      </section>
 
     <section class="controls">
       <button id="randomize">Randomize</button>
