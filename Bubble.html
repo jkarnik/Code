@@ -28,12 +28,32 @@
             transition: background-color 0.2s;
         }
         input[type="file"]::file-selector-button:hover { background-color: #718096; }
-        .node-label {
-            -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none;
-            user-select: none; pointer-events: none;
-        }
         #map-container { background-color: #1a202c; } /* Dark background before map tiles load */
         .leaflet-container { z-index: 1; }
+        #overlay-svg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* Allow clicks to pass through to the map */
+            z-index: 1000;
+        }
+        .cloud-icon {
+            fill: #cbd5e1; /* slate-300 */
+        }
+        .cloud-label {
+            fill: #e2e8f0; /* slate-200 */
+            font-weight: bold;
+            font-size: 14px;
+            text-anchor: middle;
+        }
+        .connector-path {
+            stroke: #64748b; /* slate-500 */
+            stroke-width: 1.5;
+            stroke-opacity: 0.6;
+            fill: none;
+        }
     </style>
 </head>
 <body class="bg-gray-900 text-white flex flex-col items-center min-h-screen p-4 sm:p-8">
@@ -42,13 +62,10 @@
         <!-- Header -->
         <div class="text-center mb-8">
             <h1 class="text-4xl font-bold text-gray-100">Dynamic Network Geo-Topology</h1>
-            <p class="text-gray-400 mt-2">Upload an Excel file with a 'Lat-Long' column to visualize nodes on a map.</p>
-            <p class="text-xs text-gray-500 mt-1">
-                File format: 1st row for mapping, 2nd for headers, 3rd onwards for data.
-            </p>
+            <p class="text-gray-400 mt-2">Upload an Excel file with 'Lat-Long' and 'App' columns to visualize your hybrid cloud network.</p>
         </div>
 
-        <!-- Controls (Same as before) -->
+        <!-- Controls -->
         <div class="bg-gray-800 p-4 sm:p-6 rounded-xl shadow-2xl mb-8 flex flex-col sm:flex-row items-end justify-center gap-4 sm:gap-6 flex-wrap">
             <div>
                 <label for="fileInput" class="block text-sm font-medium text-gray-300 mb-2">1. Upload Excel</label>
@@ -79,11 +96,13 @@
         </div>
 
         <!-- Visualization Container -->
-        <div id="vis-wrapper" class="w-full bg-gray-800 rounded-xl shadow-2xl p-2 relative" style="height: 60vh;">
-             <div id="map-container" class="w-full h-full rounded-xl"></div>
+        <div id="vis-wrapper" class="w-full bg-gray-800 rounded-xl shadow-2xl p-2 relative flex flex-col" style="height: 70vh;">
+             <div id="cloud-area" class="w-full h-1/4"></div>
+             <div id="map-container" class="w-full h-3/4 rounded-b-xl"></div>
              <div id="placeholder" class="absolute inset-0 flex items-center justify-center text-gray-500 z-0">
                 <p>Map visualization will appear here...</p>
             </div>
+            <svg id="overlay-svg"></svg>
         </div>
     </div>
 
@@ -99,10 +118,15 @@
         const filterClearBtn = document.getElementById('filter-clear-btn');
         const placeholder = document.getElementById('placeholder');
         const tooltip = d3.select("#tooltip");
+        const cloudArea = d3.select("#cloud-area");
+        const visWrapper = document.getElementById('vis-wrapper');
+        const overlaySvg = d3.select("#overlay-svg");
 
         let rawData = [], filteredData = [];
-        let map, svg, nodeElements;
+        let map, siteSvg, nodeElements;
+        let cloudPositions = new Map();
 
+        // --- EVENT LISTENERS ---
         fileInput.addEventListener('change', handleFile);
         sizeSelect.addEventListener('change', renderVisualization);
         colorSelect.addEventListener('change', renderVisualization);
@@ -110,6 +134,7 @@
         filterValueSelect.addEventListener('change', applyFilter);
         filterClearBtn.addEventListener('click', clearFilter);
 
+        // --- INITIALIZATION ---
         function initMap() {
             if (map) return;
             map = L.map('map-container').setView([20, 0], 2);
@@ -120,24 +145,20 @@
             }).addTo(map);
 
             L.svg().addTo(map);
-            svg = d3.select("#map-container").select("svg").select("g");
+            siteSvg = d3.select("#map-container").select("svg").select("g");
         }
         
+        // --- DATA PARSING ---
         function parseLatLng(latLngStr) {
             if (typeof latLngStr !== 'string' || !latLngStr.includes(',')) return null;
             try {
                 let [lat, lng] = latLngStr.split(',').map(s => s.trim());
-                lat = lat.toUpperCase();
-                lng = lng.toUpperCase();
-
+                lat = lat.toUpperCase(); lng = lng.toUpperCase();
                 let latVal = parseFloat(lat.replace(/[°NWES]/g, ''));
                 let lngVal = parseFloat(lng.replace(/[°NWES]/g, ''));
-
                 if (lat.includes('S')) latVal = -latVal;
                 if (lng.includes('W')) lngVal = -lngVal;
-                
                 if(isNaN(latVal) || isNaN(lngVal)) return null;
-
                 return L.latLng(latVal, lngVal);
             } catch (e) {
                 console.error("Could not parse Lat-Long:", latLngStr, e);
@@ -158,17 +179,18 @@
                 const dataAsArray = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
 
                 if (dataAsArray.length < 3) {
-                    placeholder.textContent = 'File format error: Must have 3+ rows.';
-                    return;
+                    placeholder.textContent = 'File format error: Must have 3+ rows.'; return;
                 }
                 
                 const mappingRow = dataAsArray[0];
                 const headerRow = dataAsArray[1];
                 const dataRows = dataAsArray.slice(2);
 
-                const latLngHeader = headerRow.find(h => h.toLowerCase().includes('lat-long'));
-                if (!latLngHeader) {
-                    placeholder.textContent = "Error: 'Lat-Long' column not found in file.";
+                const latLngHeader = headerRow.find(h => h && h.toLowerCase().includes('lat-long'));
+                const appHeader = headerRow.find(h => h && h.toLowerCase() === 'app');
+
+                if (!latLngHeader || !appHeader) {
+                    placeholder.textContent = "Error: 'Lat-Long' and 'App' columns are required.";
                     return;
                 }
 
@@ -181,20 +203,17 @@
                     if (mapping === 'filter') filterHeaders.push(header);
                 });
 
-                rawData = dataRows.map(row => {
-                    const rowObject = { latlng: null };
+                rawData = dataRows.map((row, i) => {
+                    const rowObject = { latlng: null, id: `node-${i}` };
                     headerRow.forEach((header, index) => {
                         if (header) {
                              const value = row[index];
-                             if(header === latLngHeader) {
-                                 rowObject.latlng = parseLatLng(value);
-                             } else {
-                                rowObject[header] = isNaN(value) || value === '' ? value : +value;
-                             }
+                             if (header === latLngHeader) rowObject.latlng = parseLatLng(value);
+                             else rowObject[header] = isNaN(value) || value === '' ? value : +value;
                         }
                     });
                     return rowObject;
-                }).filter(obj => obj.latlng && Object.keys(obj).length > 1);
+                }).filter(obj => obj.latlng && obj[appHeader] && Object.keys(obj).length > 2);
 
                 if (rawData.length > 0) {
                     filteredData = [...rawData];
@@ -208,15 +227,15 @@
 
                 } else {
                     placeholder.style.display = 'flex';
-                    placeholder.textContent = 'No valid data with Lat-Long coordinates found.';
+                    placeholder.textContent = 'No valid data with Lat-Long and App coordinates found.';
                 }
             };
             reader.readAsArrayBuffer(file);
         }
 
+        // --- UI & FILTER LOGIC ---
         function populateSelectors({ sizeHeaders, colorHeaders, filterHeaders }) {
-            sizeSelect.innerHTML = '';
-            colorSelect.innerHTML = '';
+            sizeSelect.innerHTML = ''; colorSelect.innerHTML = '';
             filterKeySelect.innerHTML = '<option value="">Select Field</option>';
             sizeHeaders.forEach(h => rawData.some(d => typeof d[h] === 'number') && sizeSelect.appendChild(new Option(h, h)));
             colorHeaders.forEach(h => colorSelect.appendChild(new Option(h, h)));
@@ -226,14 +245,12 @@
         }
 
         function populateFilterValues() {
-            clearFilter(false); // Clear filter but don't re-render
+            clearFilter(false);
             const filterKey = filterKeySelect.value;
             const select = filterValueSelect;
             select.innerHTML = '';
             if (!filterKey) {
-                select.innerHTML = '<option>Select field first</option>';
-                select.disabled = true;
-                return;
+                select.innerHTML = '<option>Select field first</option>'; select.disabled = true; return;
             }
             const uniqueValues = [...new Set(rawData.map(d => d[filterKey]))].sort((a, b) => (typeof a === 'number' && typeof b === 'number') ? a - b : String(a).localeCompare(String(b)));
             select.innerHTML = '<option value="">-- Select Value --</option>';
@@ -242,8 +259,7 @@
         }
 
         function applyFilter() {
-            const filterKey = filterKeySelect.value;
-            const filterValue = filterValueSelect.value;
+            const filterKey = filterKeySelect.value; const filterValue = filterValueSelect.value;
             filteredData = filterValue ? rawData.filter(d => d[filterKey] == filterValue) : [...rawData];
             renderVisualization();
         }
@@ -255,9 +271,47 @@
             if (doRender) renderVisualization();
         }
 
+        // --- D3 VISUALIZATION ---
+        function renderClouds() {
+            overlaySvg.selectAll('.cloud-panel').remove();
+            cloudPositions.clear();
+
+            const appHeader = Object.keys(rawData[0]).find(h => h.toLowerCase() === 'app');
+            const uniqueApps = [...new Set(rawData.map(d => d[appHeader]))];
+
+            const cloudAreaWidth = visWrapper.clientWidth;
+            const cloudAreaHeight = visWrapper.clientHeight / 4;
+            
+            const xScale = d3.scalePoint()
+                .domain(uniqueApps)
+                .range([cloudAreaWidth * 0.15, cloudAreaWidth * 0.85])
+                .padding(0.5);
+
+            uniqueApps.forEach(app => {
+                const g = overlaySvg.append('g').attr('class', 'cloud-panel');
+                const xPos = xScale(app);
+                const yPos = cloudAreaHeight / 2;
+                
+                g.append('path')
+                    .attr('class', 'cloud-icon')
+                    .attr('d', 'M 0 -20 C -25 -20, -25 10, -10 10 L 10 10 C 25 10, 25 -20, 0 -20 Z')
+                    .attr('transform', `translate(${xPos}, ${yPos}) scale(1.5)`);
+                
+                g.append('text')
+                    .attr('class', 'cloud-label')
+                    .attr('x', xPos)
+                    .attr('y', yPos + 35)
+                    .text(app);
+                
+                cloudPositions.set(app, {x: xPos, y: yPos});
+            });
+        }
+        
         function renderVisualization() {
             if (!filteredData.length || !map) return;
             
+            renderClouds();
+
             const sizeKey = sizeSelect.value, colorKey = colorSelect.value;
             if (!sizeKey || !colorKey) return;
             
@@ -275,39 +329,64 @@
                 colorScale = d3.scaleOrdinal(d3.schemeTableau10).domain([...new Set(colorValues)]);
             }
             
-            nodeElements = svg.selectAll(".node")
-                .data(filteredData, d => JSON.stringify(d))
+            nodeElements = siteSvg.selectAll(".node")
+                .data(filteredData, d => d.id)
                 .join("g")
                 .attr("class", "node cursor-pointer")
                 .on("mouseover", handleMouseOver)
                 .on("mouseout", handleMouseOut);
 
-            nodeElements.selectAll("circle").remove(); // Clear previous circles
-            
+            nodeElements.selectAll("circle").remove();
             nodeElements.append("circle")
-                .attr("r", d => sizeScale(d[sizeKey] || 0) * (map.getZoom() / 5))
                 .attr("fill", d => colorScale(d[colorKey]))
                 .attr("stroke", "#94a3b8")
                 .attr("stroke-width", 2)
                 .style("opacity", 0.85);
-
             
             updatePositions();
-            map.on("viewreset zoom", updatePositions);
+            map.off("move zoom", updatePositions).on("move zoom", updatePositions);
         }
 
         function updatePositions() {
             if(!nodeElements) return;
             const currentZoom = map.getZoom();
-            nodeElements.attr("transform", d => {
-                const point = map.latLngToLayerPoint(d.latlng);
-                return `translate(${point.x},${point.y})`;
-            });
             const sizeKey = sizeSelect.value;
             const sizeDomain = d3.extent(filteredData, d => d[sizeKey] || 0);
             const sizeScale = d3.scaleSqrt().domain(sizeDomain).range([5, 40]);
             
+            // Update site bubbles (uses latLngToLayerPoint because it's inside the leaflet SVG)
+            nodeElements.attr("transform", d => {
+                const point = map.latLngToLayerPoint(d.latlng);
+                return `translate(${point.x},${point.y})`;
+            });
             nodeElements.selectAll('circle').attr("r", d => sizeScale(d[sizeKey] || 0) * (currentZoom / 5));
+            
+            // Update splines
+            const appHeader = Object.keys(rawData[0]).find(h => h.toLowerCase() === 'app');
+            const mapTopOffset = visWrapper.clientHeight / 4;
+
+            overlaySvg.selectAll('.connector-path')
+                .data(filteredData, d => d.id)
+                .join('path')
+                .attr('class', 'connector-path')
+                .attr('d', d => {
+                    // CORRECTED: Use latLngToContainerPoint for the static overlay SVG
+                    const startPoint = map.latLngToContainerPoint(d.latlng);
+                    const endCloud = cloudPositions.get(d[appHeader]);
+
+                    if(!endCloud) return "";
+
+                    // startPoint is relative to map-container, so add mapTopOffset for the y-coordinate
+                    const x1 = startPoint.x;
+                    const y1 = startPoint.y + mapTopOffset;
+                    const x2 = endCloud.x;
+                    const y2 = endCloud.y;
+
+                    const cx = (x1 + x2) / 2;
+                    const cy = y2 + 40; // Control point below cloud for a nice curve
+
+                    return `M${x1},${y1} Q${cx},${cy} ${x2},${y2}`;
+                });
         }
 
         function handleMouseOver(event, d) {
@@ -315,7 +394,7 @@
             tooltip.transition().duration(200).style("opacity", .95);
             let content = '';
             for (const key in d) {
-                if (key !== 'latlng') {
+                if (key !== 'latlng' && key !== 'id') {
                      content += `<p><span class="tooltip-key">${key}:</span> ${d[key]}</p>`;
                 }
             }
