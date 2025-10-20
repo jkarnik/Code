@@ -39,20 +39,23 @@
             pointer-events: none; /* Allow clicks to pass through to the map */
             z-index: 1000;
         }
-        .cloud-icon {
-            fill: #cbd5e1; /* slate-300 */
+        .app-bubble { /* New style for app circles */
+            transition: fill 0.3s ease-in-out;
+            stroke: #94a3b8; /* slate-400 */
+            stroke-width: 2px;
         }
-        .cloud-label {
+        .app-label {
             fill: #e2e8f0; /* slate-200 */
             font-weight: bold;
             font-size: 14px;
             text-anchor: middle;
+            pointer-events: all; /* Allow hovering on text */
         }
         .connector-path {
-            stroke-width: 2.5; /* Increased thickness */
-            stroke-opacity: 0.7; /* Adjusted opacity */
+            stroke-width: 1.5;
+            stroke-opacity: 0.7;
             fill: none;
-            transition: stroke 0.3s ease-in-out; /* Smooth color transition */
+            transition: stroke 0.3s ease-in-out;
         }
     </style>
 </head>
@@ -62,7 +65,7 @@
         <!-- Header -->
         <div class="text-center mb-8">
             <h1 class="text-4xl font-bold text-gray-100">Dynamic Network Geo-Topology</h1>
-            <p class="text-gray-400 mt-2">Upload an Excel file with 'Lat-Long', 'App', and 'Uplink Health' columns to visualize your hybrid cloud network.</p>
+            <p class="text-gray-400 mt-2">Upload an Excel file with site data (Sheet 1) and app health (Sheet 2) to visualize your hybrid cloud network.</p>
         </div>
 
         <!-- Controls -->
@@ -127,6 +130,7 @@
         let cloudPositions = new Map();
         let uplinkHealthHeader;
         let connectorColorScale = () => '#64748b';
+        let appHealthData = new Map();
 
 
         // --- EVENT LISTENERS ---
@@ -177,12 +181,14 @@
             reader.onload = function(e) {
                 const data = new Uint8Array(e.target.result);
                 const workbook = XLSX.read(data, { type: 'array' });
+                
+                // --- Process Sheet 1: Site Data ---
                 const firstSheetName = workbook.SheetNames[0];
                 const worksheet = workbook.Sheets[firstSheetName];
                 const dataAsArray = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
 
                 if (dataAsArray.length < 3) {
-                    placeholder.textContent = 'File format error: Must have 3+ rows.'; return;
+                    placeholder.textContent = 'File format error: Sheet 1 must have 3+ rows.'; return;
                 }
                 
                 const mappingRow = dataAsArray[0];
@@ -195,7 +201,7 @@
 
 
                 if (!latLngHeader || !appHeader) {
-                    placeholder.textContent = "Error: 'Lat-Long' and 'App' columns are required.";
+                    placeholder.textContent = "Error: Sheet 1 requires 'Lat-Long' and 'App' columns.";
                     return;
                 }
 
@@ -212,13 +218,34 @@
                     const rowObject = { latlng: null, id: `node-${i}` };
                     headerRow.forEach((header, index) => {
                         if (header) {
-                             const value = row[index];
+                             let value = row[index];
+                             if(typeof value === 'string') value = value.trim();
                              if (header === latLngHeader) rowObject.latlng = parseLatLng(value);
                              else rowObject[header] = isNaN(value) || value === '' ? value : +value;
                         }
                     });
                     return rowObject;
                 }).filter(obj => obj.latlng && obj[appHeader] && Object.keys(obj).length > 2);
+
+                // --- Process Sheet 2: App Health (if it exists) ---
+                appHealthData.clear();
+                if (workbook.SheetNames.length > 1) {
+                    const secondSheetName = workbook.SheetNames[1];
+                    const appHealthWorksheet = workbook.Sheets[secondSheetName];
+                    const appHealthAsArray = XLSX.utils.sheet_to_json(appHealthWorksheet, { header: 1, defval: "" });
+                    
+                    appHealthAsArray.forEach(row => {
+                        let appName = row[0];
+                        const healthValue = parseFloat(row[1]);
+                        if (appName && typeof appName === 'string') {
+                            appName = appName.trim();
+                        }
+                        if (appName && appName.toLowerCase() !== 'row labels' && appName.toLowerCase() !== 'grand total' && !isNaN(healthValue)) {
+                            appHealthData.set(appName, healthValue);
+                        }
+                    });
+                }
+
 
                 if (rawData.length > 0) {
                     filteredData = [...rawData];
@@ -232,7 +259,7 @@
 
                 } else {
                     placeholder.style.display = 'flex';
-                    placeholder.textContent = 'No valid data with Lat-Long and App coordinates found.';
+                    placeholder.textContent = 'No valid data with Lat-Long and App found in Sheet 1.';
                 }
             };
             reader.readAsArrayBuffer(file);
@@ -277,8 +304,8 @@
         }
 
         // --- D3 VISUALIZATION ---
-        function renderClouds() {
-            overlaySvg.selectAll('.cloud-panel').remove();
+        function renderApps(appColors = new Map()) {
+            overlaySvg.selectAll('.app-panel').remove();
             cloudPositions.clear();
 
             const appHeader = Object.keys(rawData[0]).find(h => h.toLowerCase() === 'app');
@@ -293,19 +320,23 @@
                 .padding(0.5);
 
             uniqueApps.forEach(app => {
-                const g = overlaySvg.append('g').attr('class', 'cloud-panel');
+                const g = overlaySvg.append('g').attr('class', 'app-panel');
                 const xPos = xScale(app);
                 const yPos = cloudAreaHeight / 2;
                 
-                g.append('path')
-                    .attr('class', 'cloud-icon')
-                    .attr('d', 'M 0 -20 C -25 -20, -25 10, -10 10 L 10 10 C 25 10, 25 -20, 0 -20 Z')
-                    .attr('transform', `translate(${xPos}, ${yPos}) scale(1.5)`);
+                // --- MODIFIED: Use a circle instead of a path ---
+                g.append('circle')
+                    .attr('class', 'app-bubble')
+                    .attr('cx', xPos)
+                    .attr('cy', yPos)
+                    .attr('r', 30)
+                    .attr('fill', appColors.get(app) || '#cbd5e1');
                 
                 g.append('text')
-                    .attr('class', 'cloud-label')
+                    .attr('class', 'app-label')
                     .attr('x', xPos)
-                    .attr('y', yPos + 35)
+                    .attr('y', yPos)
+                    .attr('dy', '0.35em') // Vertically center text
                     .text(app);
                 
                 cloudPositions.set(app, {x: xPos, y: yPos});
@@ -315,8 +346,6 @@
         function renderVisualization() {
             if (!filteredData.length || !map) return;
             
-            renderClouds();
-
             const sizeKey = sizeSelect.value, colorKey = colorSelect.value;
             if (!sizeKey || !colorKey) return;
             
@@ -326,19 +355,37 @@
             
             // Bubble Color Scale
             const colorValues = filteredData.map(d => d[colorKey]);
-            const isNumericColor = colorValues.every(v => typeof v === 'number');
+            const numericColorValues = colorValues.filter(v => typeof v === 'number' && isFinite(v));
+            const isNumericColor = numericColorValues.length > 0;
+
             let colorScale;
             if (isNumericColor) {
-                const colorDomain = d3.extent(colorValues);
+                const colorDomain = d3.extent(numericColorValues);
                 const interpolator = t => t < 0.5 ? d3.interpolateRgb("green", "yellow")(t * 2) : d3.interpolateRgb("yellow", "red")((t - 0.5) * 2);
                 colorScale = d3.scaleSequential(interpolator).domain(colorDomain);
             } else {
                 colorScale = d3.scaleOrdinal(d3.schemeTableau10).domain([...new Set(colorValues)]);
             }
 
-            // Connector Color Scale (NEW)
+            // --- Set App Colors from Sheet 2 data ---
+            const appColorsForBubbles = new Map();
+            if (appHealthData.size > 0) {
+                const appHealthValues = Array.from(appHealthData.values());
+                const appHealthDomain = d3.extent(appHealthValues);
+                // Higher health is greener
+                const interpolator = t => t < 0.5 ? d3.interpolateRgb("red", "yellow")(t * 2) : d3.interpolateRgb("yellow", "green")((t - 0.5) * 2);
+                const appHealthColorScale = d3.scaleSequential(interpolator).domain(appHealthDomain);
+                
+                appHealthData.forEach((health, app) => {
+                    appColorsForBubbles.set(app, appHealthColorScale(health));
+                });
+            }
+            renderApps(appColorsForBubbles);
+
+
+            // Connector Color Scale
             if (uplinkHealthHeader && filteredData.some(d => typeof d[uplinkHealthHeader] === 'number')) {
-                const uplinkDomain = d3.extent(filteredData, d => d[uplinkHealthHeader]);
+                const uplinkDomain = d3.extent(filteredData.map(d=>d[uplinkHealthHeader]).filter(v => typeof v === 'number'));
                 // Low health = red, mid = yellow, high = green
                 const interpolator = t => t < 0.5 ? d3.interpolateRgb("red", "yellow")(t * 2) : d3.interpolateRgb("yellow", "green")((t - 0.5) * 2);
                 connectorColorScale = d3.scaleSequential(interpolator).domain(uplinkDomain);
@@ -355,7 +402,10 @@
 
             nodeElements.selectAll("circle").remove();
             nodeElements.append("circle")
-                .attr("fill", d => colorScale(d[colorKey]))
+                .attr("fill", d => {
+                    const value = d[colorKey];
+                    return (typeof value === 'number' && isFinite(value)) ? colorScale(value) : '#888'; // Default for non-numeric
+                })
                 .attr("stroke", "#94a3b8")
                 .attr("stroke-width", 2)
                 .style("opacity", 0.85);
@@ -386,7 +436,10 @@
                 .data(filteredData, d => d.id)
                 .join('path')
                 .attr('class', 'connector-path')
-                .attr('stroke', d => connectorColorScale(d[uplinkHealthHeader])) // Apply dynamic color
+                .attr('stroke', d => {
+                    const value = d[uplinkHealthHeader];
+                    return (typeof value === 'number' && isFinite(value)) ? connectorColorScale(value) : '#64748b';
+                })
                 .attr('d', d => {
                     const startPoint = map.latLngToContainerPoint(d.latlng);
                     const endCloud = cloudPositions.get(d[appHeader]);
@@ -399,10 +452,17 @@
                     const x2 = endCloud.x;
                     const y2 = endCloud.y;
 
-                    const cx = (x1 + x2) / 2;
-                    const cy = y2 + 40; // Control point below cloud for a nice curve
+                    // Adjust spline to connect to the edge of the circle
+                    const angle = Math.atan2(y1 - y2, x1 - x2);
+                    const radius = 30; // Radius of the app bubble
+                    const endX = x2 + radius * Math.cos(angle);
+                    const endY = y2 + radius * Math.sin(angle);
 
-                    return `M${x1},${y1} Q${cx},${cy} ${x2},${y2}`;
+
+                    const cx = (x1 + endX) / 2;
+                    const cy = endY + (y1 > endY ? -40 : 40);
+
+                    return `M${x1},${y1} Q${cx},${cy} ${endX},${endY}`;
                 });
         }
 
