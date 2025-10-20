@@ -49,10 +49,10 @@
             text-anchor: middle;
         }
         .connector-path {
-            stroke: #64748b; /* slate-500 */
-            stroke-width: 1.5;
-            stroke-opacity: 0.6;
+            stroke-width: 2.5; /* Increased thickness */
+            stroke-opacity: 0.7; /* Adjusted opacity */
             fill: none;
+            transition: stroke 0.3s ease-in-out; /* Smooth color transition */
         }
     </style>
 </head>
@@ -62,7 +62,7 @@
         <!-- Header -->
         <div class="text-center mb-8">
             <h1 class="text-4xl font-bold text-gray-100">Dynamic Network Geo-Topology</h1>
-            <p class="text-gray-400 mt-2">Upload an Excel file with 'Lat-Long' and 'App' columns to visualize your hybrid cloud network.</p>
+            <p class="text-gray-400 mt-2">Upload an Excel file with 'Lat-Long', 'App', and 'Uplink Health' columns to visualize your hybrid cloud network.</p>
         </div>
 
         <!-- Controls -->
@@ -125,6 +125,9 @@
         let rawData = [], filteredData = [];
         let map, siteSvg, nodeElements;
         let cloudPositions = new Map();
+        let uplinkHealthHeader;
+        let connectorColorScale = () => '#64748b';
+
 
         // --- EVENT LISTENERS ---
         fileInput.addEventListener('change', handleFile);
@@ -188,6 +191,8 @@
 
                 const latLngHeader = headerRow.find(h => h && h.toLowerCase().includes('lat-long'));
                 const appHeader = headerRow.find(h => h && h.toLowerCase() === 'app');
+                uplinkHealthHeader = headerRow.find(h => h && h.toLowerCase() === 'uplink health');
+
 
                 if (!latLngHeader || !appHeader) {
                     placeholder.textContent = "Error: 'Lat-Long' and 'App' columns are required.";
@@ -315,9 +320,11 @@
             const sizeKey = sizeSelect.value, colorKey = colorSelect.value;
             if (!sizeKey || !colorKey) return;
             
+            // Bubble Size Scale
             const sizeDomain = d3.extent(filteredData, d => d[sizeKey] || 0);
             const sizeScale = d3.scaleSqrt().domain(sizeDomain).range([5, 40]);
             
+            // Bubble Color Scale
             const colorValues = filteredData.map(d => d[colorKey]);
             const isNumericColor = colorValues.every(v => typeof v === 'number');
             let colorScale;
@@ -327,6 +334,16 @@
                 colorScale = d3.scaleSequential(interpolator).domain(colorDomain);
             } else {
                 colorScale = d3.scaleOrdinal(d3.schemeTableau10).domain([...new Set(colorValues)]);
+            }
+
+            // Connector Color Scale (NEW)
+            if (uplinkHealthHeader && filteredData.some(d => typeof d[uplinkHealthHeader] === 'number')) {
+                const uplinkDomain = d3.extent(filteredData, d => d[uplinkHealthHeader]);
+                // Low health = red, mid = yellow, high = green
+                const interpolator = t => t < 0.5 ? d3.interpolateRgb("red", "yellow")(t * 2) : d3.interpolateRgb("yellow", "green")((t - 0.5) * 2);
+                connectorColorScale = d3.scaleSequential(interpolator).domain(uplinkDomain);
+            } else {
+                connectorColorScale = () => '#64748b'; // Fallback to default gray
             }
             
             nodeElements = siteSvg.selectAll(".node")
@@ -369,8 +386,8 @@
                 .data(filteredData, d => d.id)
                 .join('path')
                 .attr('class', 'connector-path')
+                .attr('stroke', d => connectorColorScale(d[uplinkHealthHeader])) // Apply dynamic color
                 .attr('d', d => {
-                    // CORRECTED: Use latLngToContainerPoint for the static overlay SVG
                     const startPoint = map.latLngToContainerPoint(d.latlng);
                     const endCloud = cloudPositions.get(d[appHeader]);
 
@@ -410,5 +427,4 @@
     </script>
 </body>
 </html>
-
 
