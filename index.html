@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8"> 
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dynamic Network Geo-Visualization</title>
     <!-- Tailwind CSS for styling -->
@@ -63,9 +63,11 @@
 
     <div class="w-full max-w-7xl mx-auto">
         <!-- Header -->
-        <div class="text-center mb-8">
+        <div class="flex justify-between items-center mb-8">
             <h1 class="text-4xl font-bold text-gray-100">Dynamic Network Geo-Topology</h1>
-            <p class="text-gray-400 mt-2">Upload an Excel file with site data (Sheet 1) and app health (Sheet 2) to visualize your hybrid cloud network.</p>
+            <button id="download-sample-btn" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded-md transition duration-200">
+                Download Sample File
+            </button>
         </div>
 
         <!-- Controls -->
@@ -119,6 +121,7 @@
         const filterKeySelect = document.getElementById('filter-key-select');
         const filterValueSelect = document.getElementById('filter-value-select');
         const filterClearBtn = document.getElementById('filter-clear-btn');
+        const downloadSampleBtn = document.getElementById('download-sample-btn');
         const placeholder = document.getElementById('placeholder');
         const tooltip = d3.select("#tooltip");
         const cloudArea = d3.select("#cloud-area");
@@ -140,6 +143,37 @@
         filterKeySelect.addEventListener('change', populateFilterValues);
         filterValueSelect.addEventListener('change', applyFilter);
         filterClearBtn.addEventListener('click', clearFilter);
+        downloadSampleBtn.addEventListener('click', downloadSampleFile);
+
+        // --- SAMPLE FILE DOWNLOAD ---
+        function downloadSampleFile() {
+            const sheet1Data = [
+                ["", "", "Filter", "Filter", "Size", "Size", "Size", "Color", "Color", "Color", "Color", "Color", "Link Color"],
+                ["Site Name", "Lat-Long", "Zone", "App", "Device Count", "Throughput", "Throughput/Device (Avg)", "CPU Ulitlization (Max)", "CPU Ulitlization (Min)", "Memory Usage (Max)", "Memory Usage (Min)", "Device Latency (Max)", "Uplink Health"],
+                ["New-Relic-001", "45.1234° N, 102.5678° W", "North", "AWS", 37, 35, 0.9459, 0.9448, 0.2638, 0.5388, 0.1820, 781, 0.9],
+                ["New-Relic-002", "33.9876° N, 84.4321° W", "North", "AWS", 30, 4, 0.1333, 0.8209, 0.3447, 0.6874, 0.3277, 2382, 0.85],
+                ["New-Relic-033", "1.2345° N, 78.8765° W", "South", "AWS", 17, 27, 1.5882, 0.8267, 0.4525, 0.8817, 0.0034, 1978, 0.92],
+                ["New-Relic-078", "0.2345° S, 36.8765° E", "West", "GCP", 41, 78, 1.9024, 0.6772, 0.1533, 0.7212, 0.2314, 2975, 0.3],
+                ["New-Relic-088", "59.1234° N, 18.5678° E", "West", "GCP", 15, 79, 5.2666, 0.6917, 0.3152, 0.6933, 0.2356, 410, 0.22],
+                ["New-Relic-092", "38.8765° N, 9.4321° W", "West", "Azure", 48, 46, 0.9583, 0.7094, 0.3572, 0.7930, 0.4285, 360, 0.65],
+                ["New-Relic-093", "53.5432° N, 6.8765° W", "West", "Azure", 49, 62, 1.2653, 0.9649, 0.4031, 0.8588, 0.2934, 2034, 0.55]
+            ];
+
+            const sheet2Data = [
+                ["App", "Health"],
+                ["AWS", 0.95],
+                ["Azure", 0.6],
+                ["GCP", 0.25]
+            ];
+
+            const ws1 = XLSX.utils.aoa_to_sheet(sheet1Data);
+            const ws2 = XLSX.utils.aoa_to_sheet(sheet2Data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws1, "SiteData");
+            XLSX.utils.book_append_sheet(wb, ws2, "AppHealth");
+            XLSX.writeFile(wb, "NetworkMap_Sample.xlsx");
+        }
+
 
         // --- INITIALIZATION ---
         function initMap() {
@@ -324,7 +358,6 @@
                 const xPos = xScale(app);
                 const yPos = cloudAreaHeight / 2;
                 
-                // --- MODIFIED: Use a circle instead of a path ---
                 g.append('circle')
                     .attr('class', 'app-bubble')
                     .attr('cx', xPos)
