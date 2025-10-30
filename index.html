@@ -44,6 +44,11 @@
             stroke: #94a3b8; /* slate-400 */
             stroke-width: 2px;
         }
+        .lb-bubble { /* Load balancer circles */
+            transition: fill 0.3s ease-in-out;
+            stroke: #94a3b8; /* slate-400 */
+            stroke-width: 2px;
+        }
         .app-label {
             fill: #e2e8f0; /* slate-200 */
             font-weight: bold;
@@ -120,7 +125,8 @@
         <div class="flex-1 flex flex-col" style="margin-left: 1rem;">
             <div id="vis-wrapper" class="w-full h-full bg-gray-800 rounded-xl shadow-2xl p-2 relative flex flex-col" style="min-height: 80vh;">
                 <div id="cloud-area" style="height: 15%;"></div>
-                <div id="map-container" style="height: 85%;" class="rounded-b-xl"></div>
+                <div id="lb-area" style="height: 20%;"></div>
+                <div id="map-container" style="height: 65%;" class="rounded-b-xl"></div>
                 <div id="placeholder" class="absolute inset-0 flex items-center justify-center text-gray-500 z-0">
                     <p>Map visualization will appear here...</p>
                 </div>
@@ -151,9 +157,11 @@
         let rawData = [], filteredData = [];
         let map, siteSvg, nodeElements;
         let cloudPositions = new Map();
+        let lbPositions = new Map();
         let uplinkHealthHeader;
         let connectorColorScale = () => '#64748b';
         let appHealthData = new Map();
+        let appLinkHealthData = new Map();
 
         // Sidebar resize functionality
         let isResizing = false;
@@ -308,21 +316,28 @@
                     return rowObject;
                 }).filter(obj => obj.latlng && obj[appHeader] && Object.keys(obj).length > 2);
 
-                // --- Process Sheet 2: App Health (if it exists) ---
+                // --- Process Sheet 2: App Health and Link Health (if it exists) ---
                 appHealthData.clear();
+                appLinkHealthData.clear();
                 if (workbook.SheetNames.length > 1) {
                     const secondSheetName = workbook.SheetNames[1];
                     const appHealthWorksheet = workbook.Sheets[secondSheetName];
                     const appHealthAsArray = XLSX.utils.sheet_to_json(appHealthWorksheet, { header: 1, defval: "" });
-                    
+
                     appHealthAsArray.forEach(row => {
                         let appName = row[0];
                         const healthValue = parseFloat(row[1]);
+                        const linkHealthValue = parseFloat(row[2]); // Third column for link health
                         if (appName && typeof appName === 'string') {
                             appName = appName.trim();
                         }
-                        if (appName && appName.toLowerCase() !== 'row labels' && appName.toLowerCase() !== 'grand total' && !isNaN(healthValue)) {
-                            appHealthData.set(appName, healthValue);
+                        if (appName && appName.toLowerCase() !== 'row labels' && appName.toLowerCase() !== 'grand total' && appName.toLowerCase() !== 'app') {
+                            if (!isNaN(healthValue)) {
+                                appHealthData.set(appName, healthValue);
+                            }
+                            if (!isNaN(linkHealthValue)) {
+                                appLinkHealthData.set(appName, linkHealthValue);
+                            }
                         }
                     });
                 }
@@ -387,40 +402,68 @@
         // --- D3 VISUALIZATION ---
         function renderApps(appColors = new Map()) {
             overlaySvg.selectAll('.app-panel').remove();
+            overlaySvg.selectAll('.lb-panel').remove();
             cloudPositions.clear();
+            lbPositions.clear();
 
             const appHeader = Object.keys(rawData[0]).find(h => h.toLowerCase() === 'app');
             const uniqueApps = [...new Set(rawData.map(d => d[appHeader]))];
 
             const cloudAreaWidth = visWrapper.clientWidth;
             const cloudAreaHeight = visWrapper.clientHeight * 0.15;
-            
+            const lbAreaHeight = visWrapper.clientHeight * 0.20;
+
             const xScale = d3.scalePoint()
                 .domain(uniqueApps)
                 .range([cloudAreaWidth * 0.15, cloudAreaWidth * 0.85])
                 .padding(0.5);
 
+            // Render App Circles (48px radius - 20% smaller than 60px)
             uniqueApps.forEach(app => {
                 const g = overlaySvg.append('g').attr('class', 'app-panel');
                 const xPos = xScale(app);
                 const yPos = cloudAreaHeight / 2;
-                
+
                 g.append('circle')
                     .attr('class', 'app-bubble')
                     .attr('cx', xPos)
                     .attr('cy', yPos)
-                    .attr('r', 30)
+                    .attr('r', 48)
                     .attr('fill', appColors.get(app) || '#cbd5e1');
-                
+
                 g.append('text')
                     .attr('class', 'app-label')
                     .attr('x', xPos)
                     .attr('y', yPos)
-                    .attr('dy', '0.35em') // Vertically center text
+                    .attr('dy', '0.35em')
                     .text(app);
-                
+
                 cloudPositions.set(app, {x: xPos, y: yPos});
             });
+
+            // Render Single Shared Load Balancer (elongated oval in center)
+            const lbYOffset = cloudAreaHeight + (lbAreaHeight / 2);
+            const lbXCenter = cloudAreaWidth / 2;
+            const g = overlaySvg.append('g').attr('class', 'lb-panel');
+
+            g.append('ellipse')
+                .attr('class', 'lb-bubble')
+                .attr('cx', lbXCenter)
+                .attr('cy', lbYOffset)
+                .attr('rx', 120) // Horizontal radius
+                .attr('ry', 30)  // Vertical radius
+                .attr('fill', '#64748b');
+
+            g.append('text')
+                .attr('class', 'app-label')
+                .attr('x', lbXCenter)
+                .attr('y', lbYOffset)
+                .attr('dy', '0.35em')
+                .attr('font-size', '14px')
+                .text('Load Balancer');
+
+            // Store single LB position for connection logic
+            lbPositions.set('shared', {x: lbXCenter, y: lbYOffset, rx: 120, ry: 30});
         }
         
         function renderVisualization() {
@@ -508,10 +551,18 @@
             });
             nodeElements.selectAll('circle').attr("r", d => sizeScale(d[sizeKey] || 0) * (currentZoom / 5));
             
-            // Update splines
+            // Update connection paths: site -> shared LB -> apps
             const appHeader = Object.keys(rawData[0]).find(h => h.toLowerCase() === 'app');
-            const mapTopOffset = visWrapper.clientHeight * 0.15;
+            const mapTopOffset = visWrapper.clientHeight * 0.35; // 15% cloud + 20% LB
 
+            // Remove old paths
+            overlaySvg.selectAll('.connector-path').remove();
+            overlaySvg.selectAll('.lb-to-app-path').remove();
+
+            const sharedLB = lbPositions.get('shared');
+            if (!sharedLB) return;
+
+            // Draw paths from site to shared load balancer
             overlaySvg.selectAll('.connector-path')
                 .data(filteredData, d => d.id)
                 .join('path')
@@ -522,28 +573,68 @@
                 })
                 .attr('d', d => {
                     const startPoint = map.latLngToContainerPoint(d.latlng);
-                    const endCloud = cloudPositions.get(d[appHeader]);
 
-                    if(!endCloud) return "";
-
-                    // startPoint is relative to map-container, so add mapTopOffset for the y-coordinate
                     const x1 = startPoint.x;
                     const y1 = startPoint.y + mapTopOffset;
-                    const x2 = endCloud.x;
-                    const y2 = endCloud.y;
+                    const x2 = sharedLB.x;
+                    const y2 = sharedLB.y;
 
-                    // Adjust spline to connect to the edge of the circle
+                    // Connect to edge of LB ellipse (bottom edge)
                     const angle = Math.atan2(y1 - y2, x1 - x2);
-                    const radius = 30; // Radius of the app bubble
-                    const endX = x2 + radius * Math.cos(angle);
-                    const endY = y2 + radius * Math.sin(angle);
-
+                    // Use ellipse equation to find intersection point
+                    const t = Math.atan2((y1 - y2) / sharedLB.ry, (x1 - x2) / sharedLB.rx);
+                    const endX = x2 + sharedLB.rx * Math.cos(t);
+                    const endY = y2 + sharedLB.ry * Math.sin(t);
 
                     const cx = (x1 + endX) / 2;
                     const cy = endY + (y1 > endY ? -40 : 40);
 
                     return `M${x1},${y1} Q${cx},${cy} ${endX},${endY}`;
                 });
+
+            // Create color scale for LB-to-app lines based on Link Health data (column 3)
+            let lbToAppColorScale = () => '#94a3b8'; // Default gray
+            if (appLinkHealthData.size > 0) {
+                const linkHealthValues = Array.from(appLinkHealthData.values());
+                const linkHealthDomain = d3.extent(linkHealthValues);
+                // Low health = red, mid = yellow, high = green
+                const interpolator = t => t < 0.5 ? d3.interpolateRgb("red", "yellow")(t * 2) : d3.interpolateRgb("yellow", "green")((t - 0.5) * 2);
+                lbToAppColorScale = d3.scaleSequential(interpolator).domain(linkHealthDomain);
+            }
+
+            // Draw paths from shared load balancer to each app (5x thicker = 10px)
+            const uniqueApps = [...new Set(filteredData.map(d => d[appHeader]))];
+            uniqueApps.forEach(app => {
+                const appPos = cloudPositions.get(app);
+
+                if (!appPos) return;
+
+                // Calculate connection points
+                const angle = Math.atan2(appPos.y - sharedLB.y, appPos.x - sharedLB.x);
+
+                // Start from edge of LB ellipse (top side)
+                const t = Math.atan2((appPos.y - sharedLB.y) / sharedLB.ry, (appPos.x - sharedLB.x) / sharedLB.rx);
+                const startX = sharedLB.x + sharedLB.rx * Math.cos(t);
+                const startY = sharedLB.y + sharedLB.ry * Math.sin(t);
+
+                // End at bottom of app circle (48px radius)
+                const endX = appPos.x - 48 * Math.cos(angle);
+                const endY = appPos.y - 48 * Math.sin(angle);
+
+                // Get color from Link Health data (column 3)
+                const linkQuality = appLinkHealthData.get(app);
+                const lineColor = (linkQuality !== undefined && !isNaN(linkQuality))
+                    ? lbToAppColorScale(linkQuality)
+                    : '#94a3b8';
+
+                overlaySvg.append('path')
+                    .attr('class', 'lb-to-app-path')
+                    .attr('stroke', lineColor)
+                    .attr('stroke-width', 10)
+                    .attr('stroke-opacity', 0.7)
+                    .attr('fill', 'none')
+                    .attr('d', `M${startX},${startY} L${endX},${endY}`);
+            });
         }
 
         function handleMouseOver(event, d) {
