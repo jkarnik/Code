@@ -14,13 +14,24 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <style>
-        body { font-family: 'Inter', sans-serif; }
+        body {
+            font-family: 'Inter', sans-serif;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        body.light-mode {
+            background-color: #f3f4f6;
+            color: #1f2937;
+        }
         #tooltip {
             position: absolute; text-align: left; padding: 10px; font-size: 14px;
             background: #2d3748; color: white; border: 1px solid #4a5568;
             border-radius: 8px; pointer-events: none; opacity: 0;
             transition: opacity 0.3s; max-width: 300px; z-index: 1001; /* Above Leaflet */
         }
+        body.light-mode #tooltip {
+            background: #ffffff; color: #1f2937; border: 1px solid #d1d5db;
+        }
+        body.light-mode .tooltip-key { color: #2563eb; }
         .tooltip-key { font-weight: bold; color: #63b3ed; }
         input[type="file"]::file-selector-button {
             background-color: #4a5568; color: white; border: 1px solid #718096;
@@ -28,7 +39,15 @@
             transition: background-color 0.2s;
         }
         input[type="file"]::file-selector-button:hover { background-color: #718096; }
-        #map-container { background-color: #1a202c; } /* Dark background before map tiles load */
+        body.light-mode input[type="file"]::file-selector-button {
+            background-color: #e5e7eb; color: #1f2937; border: 1px solid #d1d5db;
+        }
+        body.light-mode input[type="file"]::file-selector-button:hover { background-color: #d1d5db; }
+        #map-container {
+            background-color: #1a202c;
+            transition: background-color 0.3s;
+        }
+        body.light-mode #map-container { background-color: #e0f2fe; }
         .leaflet-container { z-index: 1; }
         #overlay-svg {
             position: absolute;
@@ -39,44 +58,63 @@
             pointer-events: none; /* Allow clicks to pass through to the map */
             z-index: 1000;
         }
-        .app-bubble { /* New style for app circles */
+        .app-bubble {
             transition: fill 0.3s ease-in-out;
-            stroke: #94a3b8; /* slate-400 */
+            stroke: #94a3b8;
             stroke-width: 2px;
         }
-        .lb-bubble { /* Load balancer circles */
+        body.light-mode .app-bubble { stroke: #64748b; }
+        .lb-bubble {
             transition: fill 0.3s ease-in-out;
-            stroke: #94a3b8; /* slate-400 */
+            stroke: #94a3b8;
             stroke-width: 2px;
         }
+        body.light-mode .lb-bubble { stroke: #64748b; }
         .app-label {
-            fill: #e2e8f0; /* slate-200 */
+            fill: #e2e8f0;
             font-weight: bold;
             font-size: 14px;
             text-anchor: middle;
-            pointer-events: all; /* Allow hovering on text */
+            pointer-events: all;
         }
+        body.light-mode .app-label { fill: #1f2937; }
         .connector-path {
             stroke-width: 1.5;
             stroke-opacity: 0.7;
             fill: none;
             transition: stroke 0.3s ease-in-out;
         }
-       
+        #theme-toggle {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 1002;
+        }
     </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen p-4 sm:p-8">
 
+    <!-- Theme Toggle Button -->
+    <button id="theme-toggle" class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg shadow-lg transition-colors flex items-center gap-2">
+        <svg id="sun-icon" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
+        </svg>
+        <svg id="moon-icon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
+        </svg>
+        <span id="theme-label">Dark</span>
+    </button>
+
     <div class="flex h-full">
         <!-- Left Sidebar Controls -->
-        <div id="sidebar" class="flex-shrink-0 flex flex-col gap-6" style="width: 320px;">
+        <div id="sidebar" class="flex-shrink-0 flex flex-col gap-6 transition-colors" style="width: 320px;">
             <!-- Header -->
             <div>
-                <h1 class="text-3xl font-bold text-gray-100 mb-2">Dynamic Network Geo-Topology</h1>
+                <h1 id="sidebar-title" class="text-3xl font-bold text-gray-100 mb-2">Dynamic Network Geo-Topology</h1>
             </div>
 
             <!-- Controls -->
-            <div class="bg-gray-800 p-6 rounded-xl shadow-2xl flex flex-col gap-6">
+            <div id="controls-panel" class="bg-gray-800 p-6 rounded-xl shadow-2xl flex flex-col gap-6">
                 <div>
                     <label for="fileInput" class="block text-sm font-medium text-gray-300 mb-2">1. Upload Excel</label>
                     <input type="file" id="fileInput" accept=".xlsx" class="text-sm text-gray-300 file:mr-4 w-full">
@@ -89,6 +127,17 @@
                 </div>
 
                 <div class="border-t border-gray-700 pt-4">
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-300 mb-2">View Mode</label>
+                        <div class="flex items-center gap-3">
+                            <span class="text-sm text-gray-400">Sites Only</span>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="view-toggle" class="sr-only peer" checked disabled>
+                                <div class="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </label>
+                            <span class="text-sm text-gray-400">Full Topology</span>
+                        </div>
+                    </div>
                     <div>
                         <label for="size-select" class="block text-sm font-medium text-gray-300 mb-2">2. Bubble Size</label>
                         <select id="size-select" class="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" disabled><option>Upload file</option></select>
@@ -146,6 +195,11 @@
         const filterValueSelect = document.getElementById('filter-value-select');
         const filterClearBtn = document.getElementById('filter-clear-btn');
         const downloadSampleBtn = document.getElementById('download-sample-btn');
+        const viewToggle = document.getElementById('view-toggle');
+        const themeToggleBtn = document.getElementById('theme-toggle');
+        const themeLabel = document.getElementById('theme-label');
+        const sunIcon = document.getElementById('sun-icon');
+        const moonIcon = document.getElementById('moon-icon');
         const placeholder = document.getElementById('placeholder');
         const tooltip = d3.select("#tooltip");
         const cloudArea = d3.select("#cloud-area");
@@ -155,13 +209,14 @@
         const resizeHandle = document.getElementById('resize-handle');
 
         let rawData = [], filteredData = [];
-        let map, siteSvg, nodeElements;
+        let map, siteSvg, nodeElements, mapTileLayer;
         let cloudPositions = new Map();
         let lbPositions = new Map();
         let uplinkHealthHeader;
         let connectorColorScale = () => '#64748b';
         let appHealthData = new Map();
         let appLinkHealthData = new Map();
+        let isLightMode = false;
 
         // Sidebar resize functionality
         let isResizing = false;
@@ -191,6 +246,64 @@
         });
 
 
+        // --- THEME TOGGLE ---
+        function toggleTheme() {
+            isLightMode = !isLightMode;
+            document.body.classList.toggle('light-mode');
+
+            // Update toggle button
+            if (isLightMode) {
+                themeLabel.textContent = 'Light';
+                sunIcon.classList.remove('hidden');
+                moonIcon.classList.add('hidden');
+                themeToggleBtn.classList.remove('bg-gray-700', 'hover:bg-gray-600');
+                themeToggleBtn.classList.add('bg-gray-200', 'hover:bg-gray-300', 'text-gray-900');
+            } else {
+                themeLabel.textContent = 'Dark';
+                sunIcon.classList.add('hidden');
+                moonIcon.classList.remove('hidden');
+                themeToggleBtn.classList.remove('bg-gray-200', 'hover:bg-gray-300', 'text-gray-900');
+                themeToggleBtn.classList.add('bg-gray-700', 'hover:bg-gray-600', 'text-white');
+            }
+
+            // Update sidebar
+            const controlsPanel = document.getElementById('controls-panel');
+            const sidebarTitle = document.getElementById('sidebar-title');
+            if (isLightMode) {
+                controlsPanel.classList.remove('bg-gray-800');
+                controlsPanel.classList.add('bg-white', 'border', 'border-gray-300');
+                sidebarTitle.classList.remove('text-gray-100');
+                sidebarTitle.classList.add('text-gray-900');
+                visWrapper.classList.remove('bg-gray-800');
+                visWrapper.classList.add('bg-white', 'border', 'border-gray-300');
+            } else {
+                controlsPanel.classList.remove('bg-white', 'border', 'border-gray-300');
+                controlsPanel.classList.add('bg-gray-800');
+                sidebarTitle.classList.remove('text-gray-900');
+                sidebarTitle.classList.add('text-gray-100');
+                visWrapper.classList.remove('bg-white', 'border', 'border-gray-300');
+                visWrapper.classList.add('bg-gray-800');
+            }
+
+            // Update map tiles
+            if (map && mapTileLayer) {
+                map.removeLayer(mapTileLayer);
+                if (isLightMode) {
+                    mapTileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                        subdomains: 'abcd',
+                        maxZoom: 19
+                    }).addTo(map);
+                } else {
+                    mapTileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png', {
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                        subdomains: 'abcd',
+                        maxZoom: 19
+                    }).addTo(map);
+                }
+            }
+        }
+
         // --- EVENT LISTENERS ---
         fileInput.addEventListener('change', handleFile);
         sizeSelect.addEventListener('change', renderVisualization);
@@ -199,6 +312,8 @@
         filterValueSelect.addEventListener('change', applyFilter);
         filterClearBtn.addEventListener('click', clearFilter);
         downloadSampleBtn.addEventListener('click', downloadSampleFile);
+        viewToggle.addEventListener('change', renderVisualization);
+        themeToggleBtn.addEventListener('click', toggleTheme);
 
         // --- SAMPLE FILE DOWNLOAD ---
         function downloadSampleFile() {
@@ -234,7 +349,7 @@
         function initMap() {
             if (map) return;
             map = L.map('map-container').setView([20, 0], 2);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            mapTileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png', {
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
                 subdomains: 'abcd',
                 maxZoom: 19
@@ -368,7 +483,7 @@
             sizeHeaders.forEach(h => rawData.some(d => typeof d[h] === 'number') && sizeSelect.appendChild(new Option(h, h)));
             colorHeaders.forEach(h => colorSelect.appendChild(new Option(h, h)));
             filterHeaders.forEach(h => filterKeySelect.appendChild(new Option(h, h)));
-            [sizeSelect, colorSelect, filterKeySelect, filterClearBtn].forEach(el => el.disabled = false);
+            [sizeSelect, colorSelect, filterKeySelect, filterClearBtn, viewToggle].forEach(el => el.disabled = false);
             populateFilterValues();
         }
 
@@ -405,6 +520,9 @@
             overlaySvg.selectAll('.lb-panel').remove();
             cloudPositions.clear();
             lbPositions.clear();
+
+            // Skip rendering if in simplified view (toggle unchecked)
+            if (!viewToggle.checked) return;
 
             const appHeader = Object.keys(rawData[0]).find(h => h.toLowerCase() === 'app');
             const uniqueApps = [...new Set(rawData.map(d => d[appHeader]))];
@@ -558,6 +676,9 @@
             // Remove old paths
             overlaySvg.selectAll('.connector-path').remove();
             overlaySvg.selectAll('.lb-to-app-path').remove();
+
+            // Skip rendering connections if in simplified view
+            if (!viewToggle.checked) return;
 
             const sharedLB = lbPositions.get('shared');
             if (!sharedLB) return;
